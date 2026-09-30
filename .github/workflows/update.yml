@@ -23,4 +23,5 @@ jobs:
           git config user.email "bot@chivatazo.es"
           git add data
           git diff --cached --quiet || git commit -m "Precios $(date -u +%F-%H%M)"
+          git pull --rebase -X theirs origin main
           git push
