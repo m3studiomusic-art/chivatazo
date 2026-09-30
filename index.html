@@ -113,7 +113,15 @@ footer{margin-top:26px;font-size:13px;color:var(--muted)}
 .locbtn{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:8px 12px;font-size:14px;font-weight:600;cursor:pointer}
 .hdr-r{display:flex;gap:6px;align-items:center}
 .empty{padding:16px;color:#A5B0BA;font-size:15px}
-  .trend svg:empty{display:none}
+.trend svg:empty{display:none}
+.near{display:flex;flex-direction:column;gap:10px;margin:8px 0 10px}
+.nearbtn{align-self:flex-start;border:0;background:var(--ink);color:var(--bg);border-radius:12px;padding:11px 16px;font-weight:800;font-size:15px;cursor:pointer}
+.radius{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:14px;color:var(--muted)}
+.radius button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 12px;font-weight:700;font-size:14px;cursor:pointer}
+.radius button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.locmsg{background:#FFF3D1;color:#5A4300;border:1px solid #F2D27A;border-radius:12px;padding:12px 14px;font-size:15px;margin:0 0 12px}
+.more{display:block;width:100%;margin-top:10px;border:1px dashed var(--muted);background:transparent;border-radius:12px;padding:12px;font-weight:800;font-size:15px;cursor:pointer}
+.meta.addr{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 </style>
 </head>
 <body>
@@ -121,7 +129,6 @@ footer{margin-top:26px;font-size:13px;color:var(--muted)}
   <header>
     <div class="logo" aria-label="Chivatazo">🤫 <b>Chivatazo</b></div>
     <div class="hdr-r">
-      <button class="locbtn" id="locBtn" aria-label="Usar mi ubicación">📍</button>
       <select id="place" class="place" aria-label="Tu provincia"></select>
     </div>
   </header>
@@ -144,8 +151,16 @@ footer{margin-top:26px;font-size:13px;color:var(--muted)}
   </section>
 
   <h2>Las más baratas</h2>
-  <p class="sub" id="stSub">Ahorro calculado para un depósito de 50 litros frente a la media de tu provincia.</p>
+  <div class="near">
+    <button class="nearbtn" id="locBtn">📍 Ver las de cerca de mí</button>
+    <div class="radius" id="radius" role="group" aria-label="Distancia máxima" hidden>
+      <button data-km="3">3 km</button><button data-km="5">5 km</button><button data-km="10">10 km</button><button data-km="15">15 km</button><button data-km="25">25 km</button>
+    </div>
+  </div>
+  <p class="locmsg" id="locMsg" role="alert" hidden></p>
+  <p class="sub" id="stSub"></p>
   <div class="totem" id="stations"></div>
+  <button class="more" id="moreBtn" hidden>Ver más gasolineras</button>
 
   <h2 id="lightTitle">La luz hora a hora</h2>
   <p class="sub">Tarifa regulada (PVPC). Los precios de mañana salen cada tarde.</p>
