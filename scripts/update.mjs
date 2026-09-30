@@ -4,7 +4,6 @@ import fs from 'node:fs/promises';
 
 const MINETUR = 'https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/';
 const FUELS = { g95: 'Precio Gasolina 95 E5', diesel: 'Precio Gasoleo A' };
-const PER_PROVINCE = 60;      // gasolineras más baratas guardadas por provincia
 const HISTORY_DAYS = 60;
 
 const price = s => { const n = parseFloat(String(s ?? '').replace(',', '.')); return Number.isFinite(n) && n > 0 ? n : null; };
@@ -25,31 +24,46 @@ async function getJSON(url) {
   throw last;
 }
 
+const slug = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase();
+
+// Devuelve { fuels: medias por provincia, byProv: todas las gasolineras por provincia }
 async function fuels() {
   const raw = await getJSON(MINETUR);
   const list = raw.ListaEESSPrecio || [];
   if (list.length < 1000) throw new Error('El Ministerio ha devuelto pocas gasolineras: ' + list.length);
+  const byProv = {};
+  for (const e of list) {
+    const prov = (e['Provincia'] || '').trim(); if (!prov) continue;
+    const g = price(e[FUELS.g95]), d = price(e[FUELS.diesel]);
+    if (!g && !d) continue;
+    (byProv[prov] ??= []).push([
+      (e['Rótulo'] || '').trim(), (e['Dirección'] || '').trim(), (e['Municipio'] || '').trim(),
+      coord(e['Latitud']), coord(e['Longitud (WGS84)']), g, d
+    ]);
+  }
   const out = {};
-  for (const [key, field] of Object.entries(FUELS)) {
-    const byProv = {}; let sum = 0, n = 0;
-    for (const e of list) {
-      const p = price(e[field]); if (!p) continue;
-      const prov = (e['Provincia'] || '').trim(); if (!prov) continue;
-      (byProv[prov] ??= []).push({
-        b: (e['Rótulo'] || '').trim(), dir: (e['Dirección'] || '').trim(), mun: (e['Municipio'] || '').trim(),
-        lat: coord(e['Latitud']), lon: coord(e['Longitud (WGS84)']), p, h: (e['Horario'] || '').trim()
-      });
-      sum += p; n++;
-    }
-    const provinces = {};
+  const idx = { g95: 5, diesel: 6 };
+  for (const [key, i] of Object.entries(idx)) {
+    let sum = 0, n = 0; const provinces = {};
     for (const [prov, arr] of Object.entries(byProv)) {
-      arr.sort((a, b) => a.p - b.p);
-      const avg = arr.reduce((s, x) => s + x.p, 0) / arr.length;
-      provinces[prov] = { avg: +avg.toFixed(4), n: arr.length, cheapest: arr.slice(0, PER_PROVINCE) };
+      const ps = arr.map(x => x[i]).filter(Boolean);
+      if (!ps.length) continue;
+      const avg = ps.reduce((a, b) => a + b, 0) / ps.length;
+      provinces[prov] = { avg: +avg.toFixed(4), n: ps.length };
+      sum += ps.reduce((a, b) => a + b, 0); n += ps.length;
     }
     out[key] = { avg: +(sum / n).toFixed(4), provinces };
   }
-  return out;
+  const geo = {};
+  for (const [prov, arr] of Object.entries(byProv)) {
+    const pts = arr.filter(x => x[3] != null && x[4] != null);
+    geo[prov] = {
+      file: slug(prov),
+      lat: +(pts.reduce((a, x) => a + x[3], 0) / pts.length).toFixed(3),
+      lon: +(pts.reduce((a, x) => a + x[4], 0) / pts.length).toFixed(3)
+    };
+  }
+  return { fuels: out, byProv, geo };
 }
 
 async function pvpc(date) {
@@ -76,14 +90,19 @@ await fs.mkdir('data', { recursive: true });
 let prev = {};
 try { prev = JSON.parse(await fs.readFile('data/today.json', 'utf8')); } catch {}
 
-let fuel;
-try { fuel = await fuels(); }
-catch (e) { console.warn('Carburantes no disponibles:', e.message); fuel = prev.fuels; }
-if (!fuel) throw new Error('No hay datos de carburantes');
+let fuel, geo;
+try {
+  const f = await fuels();
+  fuel = f.fuels; geo = f.geo;
+  await fs.mkdir('data/prov', { recursive: true });
+  for (const [prov, arr] of Object.entries(f.byProv))
+    await fs.writeFile(`data/prov/${geo[prov].file}.json`, JSON.stringify(arr));
+} catch (e) { console.warn('Carburantes no disponibles:', e.message); fuel = prev.fuels; geo = prev.geo; }
+if (!fuel || !geo) throw new Error('No hay datos de carburantes');
 
 const light = { date: today, today: await pvpc(today), tomorrow: await pvpc(madridDate(1)) };
 
-await fs.writeFile('data/today.json', JSON.stringify({ updated: new Date().toISOString(), date: today, fuels: fuel, light }));
+await fs.writeFile('data/today.json', JSON.stringify({ updated: new Date().toISOString(), date: today, fuels: fuel, geo, light }));
 
 let hist = {};
 try { hist = JSON.parse(await fs.readFile('data/history.json', 'utf8')); } catch {}
