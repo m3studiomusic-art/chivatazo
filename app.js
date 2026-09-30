@@ -25,10 +25,27 @@
   $('#place').value = place;
   let fuel = store.get('fuel') === 'diesel' ? 'diesel' : 'g95';
   document.querySelectorAll('[data-fuel]').forEach(x => x.setAttribute('aria-pressed', x.dataset.fuel === fuel));
-  let day = 'today', me = null;
+  let day = 'today', me = null, shown = 5;
+  let km = +store.get('km') || 5;
+  const PAGE = 5;
 
   const dist = (a, b) => { const R = 6371, r = Math.PI / 180, dLa = (b.lat - a.lat) * r, dLo = (b.lon - a.lon) * r;
     const h = Math.sin(dLa / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
+
+  // gasolineras por provincia, cargadas bajo demanda
+  const cache = {};
+  async function loadProv(p) {
+    if (cache[p]) return cache[p];
+    const g = data.geo?.[p]; if (!g) return [];
+    try {
+      const arr = await (await fetch(`data/prov/${g.file}.json`, { cache: 'no-cache' })).json();
+      cache[p] = arr.map(x => ({ b: x[0], dir: x[1], mun: x[2], lat: x[3], lon: x[4], g95: x[5], diesel: x[6], prov: p }));
+    } catch { cache[p] = []; }
+    return cache[p];
+  }
+  function nearestProvs(pt, n = 3) {
+    return Object.entries(data.geo || {}).map(([p, g]) => [p, dist(pt, g)]).sort((a, b) => a[1] - b[1]).slice(0, n).map(x => x[0]);
+  }
 
   function series() {
     return Object.keys(hist).sort().slice(-14).map(d => hist[d]?.[fuel]?.[place]).filter(v => typeof v === 'number');
@@ -44,12 +61,12 @@
 
   let lastFuel = null, lastLight = null;
 
-  function renderFuel() {
+  function renderVerdict() {
     const P = data.fuels[fuel].provinces[place];
     const s = series(), v = verdict(s);
     $('#verdict').textContent = v.t; $('#why').textContent = v.why;
     document.querySelectorAll('.light span').forEach(e => e.classList.toggle('on', e.classList.contains(v.k)));
-    $('#avg').textContent = fmt(P.avg) + ' €/l';
+    $('#avg').textContent = P ? fmt(P.avg) + ' €/l' : '';
     const col = v.k === 'g' ? 'var(--go)' : v.k === 'r' ? 'var(--stop)' : 'var(--wait)';
     if (s.length >= 2) {
       const mn = Math.min(...s) - 0.003, mx = Math.max(...s) + 0.003;
@@ -59,29 +76,49 @@
       $('#spark').innerHTML = `<path d="${line} L300 70 L0 70Z" fill="${col}" opacity=".12"/><path d="${line}" fill="none" stroke="${col}" stroke-width="2.5" vector-effect="non-scaling-stroke" stroke-linejoin="round"/><circle cx="${lp[0]}" cy="${lp[1]}" r="4" fill="${col}"/>`;
       $('#trendLabel').textContent = `Precio medio en tu provincia, últimos ${s.length} días`;
     } else { $('#spark').innerHTML = ''; $('#trendLabel').textContent = 'Precio medio en tu provincia'; }
+    return v;
+  }
 
-    let list = P.cheapest.slice();
+  let renderId = 0;
+  async function renderFuel() {
+    const id = ++renderId;
+    const v = renderVerdict();
+    const P = data.fuels[fuel].provinces[place];
+    let list;
     if (me) {
-      list.forEach(x => x.km = (x.lat != null && x.lon != null) ? dist(me, x) : 999);
-      const near = list.filter(x => x.km <= 15);
-      list = near.length >= 3 ? near : list;
-      $('#stSub').textContent = near.length >= 3 ? 'A menos de 15 km de ti. Ahorro para un depósito de 50 litros frente a la media.' : 'No hay suficientes baratas a menos de 15 km; te enseño las de toda la provincia.';
+      const provsNear = nearestProvs(me);
+      const all = (await Promise.all(provsNear.map(loadProv))).flat();
+      list = all.filter(x => x[fuel] && x.lat != null).map(x => ({ ...x, km: dist(me, x) })).filter(x => x.km <= km);
+      $('#stSub').textContent = list.length
+        ? `${list.length} gasolineras a menos de ${km} km, de la más barata a la más cara.`
+        : `No hay gasolineras con ${fuel === 'g95' ? 'gasolina 95' : 'diésel'} a menos de ${km} km. Prueba con más distancia.`;
     } else {
-      $('#stSub').textContent = 'En toda la provincia. Pulsa 📍 para ver las que tienes cerca.';
+      list = (await loadProv(place)).filter(x => x[fuel]);
+      $('#stSub').textContent = `Toda la provincia, de la más barata a la más cara. Pulsa 📍 para ver solo las de tu alrededor.`;
     }
-    list = list.slice(0, 5);
-    $('#stations').innerHTML = list.length ? list.map((st, i) => {
-      const save = (P.avg - st.p) * 50;
-      const saveTxt = save > 0.5 ? `<span class="save">${fmt(save, 2)} € menos</span> que la media` : 'Cerca de la media';
-      const [e, c] = fmt(st.p).split(',');
-      const where = nice(st.dir) + ', ' + nice(st.mun) + (st.km != null && st.km < 999 ? `, a ${fmt(st.km, 1)} km` : '');
+    if (id !== renderId) return;
+    list.sort((a, b) => a[fuel] - b[fuel]);
+    const avg = P ? P.avg : null;
+    const view = list.slice(0, shown);
+    $('#stations').innerHTML = view.length ? view.map((st, i) => {
+      const p = st[fuel];
+      const save = avg ? (avg - p) * 50 : 0;
+      const saveTxt = save > 0.5 ? `<span class="save">${fmt(save, 2)} € menos</span> que la media en un depósito de 50 l`
+        : save < -0.5 ? `${fmt(-save, 2)} € más que la media en un depósito de 50 l` : 'En la media de la provincia';
+      const [e, c] = fmt(p).split(',');
+      const where = nice(st.dir) + ', ' + nice(st.mun);
+      const kmTxt = st.km != null ? ` · a ${fmt(st.km, 1)} km` : '';
       const maps = st.lat != null ? `https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lon}` : `https://www.google.com/maps/search/${encodeURIComponent(st.b + ' ' + st.dir + ' ' + st.mun)}`;
       return `<div class="row${i === 0 ? ' best' : ''}">
-        <div><div class="brand">${i === 0 ? '🏆 ' : ''}${nice(st.b || 'Gasolinera')}</div><div class="meta">${where}</div><div class="meta">${saveTxt}</div>
+        <div><div class="brand">${i === 0 ? '🏆 ' : ''}${nice(st.b || 'Gasolinera')}</div><div class="meta addr">${where}${kmTxt}</div><div class="meta">${saveTxt}</div>
         <a class="go-btn" href="${maps}" target="_blank" rel="noopener">Cómo llegar</a></div>
         <div class="price">${e},${c.slice(0, 2)}<small>${c.slice(2)}</small></div></div>`;
-    }).join('') : '<div class="empty">No hay precios para este combustible en tu provincia.</div>';
-    lastFuel = { v, st: list[0] };
+    }).join('') : '<div class="empty">No hay gasolineras que mostrar.</div>';
+    const rest = list.length - view.length;
+    const more = $('#moreBtn');
+    more.hidden = rest <= 0;
+    more.textContent = `Ver ${Math.min(PAGE, rest)} más (quedan ${rest})`;
+    lastFuel = { v, st: list[0], p: list[0]?.[fuel] };
     renderShare();
   }
 
@@ -115,10 +152,10 @@
 
   function renderShare() {
     if (!lastFuel) return;
-    const { v, st } = lastFuel;
+    const { v, st, p } = lastFuel;
     const icon = v.k === 'g' ? '🟢' : v.k === 'r' ? '🔴' : '🟡';
     let t = `🤫 El chivatazo de hoy (${nice(place)})\n${icon} ${fuel === 'g95' ? 'Gasolina 95' : 'Diésel'}: ${v.t.toLowerCase()}`;
-    if (st) t += `\n⛽ Más barata: ${nice(st.b)} (${nice(st.mun)}), ${fmt(st.p)} €/l`;
+    if (st) t += `\n⛽ Más barata: ${nice(st.b)} (${nice(st.mun)}), ${fmt(p)} €/l`;
     if (lastLight) t += `\n💡 Luz barata: ${lastLight.w2}:00–${lastLight.w2 + 2}:00\n🚫 Hora cara: ${lastLight.worst}:00`;
     t += '\nchivatazo.es';
     $('#shareText').textContent = t;
@@ -131,22 +168,43 @@
     setTimeout(() => b.textContent = 'Compartir', 2200);
   });
 
+  const locMsg = t => { const m = $('#locMsg'); m.hidden = !t; m.textContent = t || ''; };
+  function setKm(k) {
+    km = k; store.set('km', k);
+    document.querySelectorAll('[data-km]').forEach(x => x.setAttribute('aria-pressed', +x.dataset.km === km));
+  }
+  setKm(km);
+  document.querySelectorAll('[data-km]').forEach(b => b.addEventListener('click', () => { setKm(+b.dataset.km); shown = PAGE; renderFuel(); }));
+
   $('#locBtn').addEventListener('click', () => {
-    if (!navigator.geolocation) return;
-    $('#locBtn').textContent = '…';
+    const btn = $('#locBtn');
+    if (me) { // desactivar
+      me = null; shown = PAGE; $('#radius').hidden = true; btn.textContent = '📍 Ver las de cerca de mí'; locMsg(''); renderFuel(); return;
+    }
+    if (!('geolocation' in navigator) || !window.isSecureContext) {
+      locMsg('Tu navegador no permite usar la ubicación. Elige tu provincia en el desplegable de arriba.'); return;
+    }
+    btn.textContent = '📍 Buscando tu ubicación…'; btn.disabled = true; locMsg('');
     navigator.geolocation.getCurrentPosition(pos => {
+      btn.disabled = false;
       me = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-      let best = place, bd = 1e9;
-      for (const [p, v] of Object.entries(data.fuels.g95.provinces))
-        for (const x of v.cheapest) if (x.lat != null) { const d = dist(me, x); if (d < bd) { bd = d; best = p; } }
-      place = best; $('#place').value = place; store.set('prov', place);
-      $('#locBtn').textContent = '📍'; renderFuel();
-    }, () => { $('#locBtn').textContent = '📍'; }, { timeout: 10000, maximumAge: 600000 });
+      const p = nearestProvs(me, 1)[0];
+      if (p) { place = p; $('#place').value = place; store.set('prov', place); }
+      $('#radius').hidden = false; btn.textContent = '✕ Ver toda la provincia';
+      shown = PAGE; renderFuel();
+    }, err => {
+      btn.disabled = false; btn.textContent = '📍 Ver las de cerca de mí';
+      if (err.code === 1) locMsg('Para ver las gasolineras de tu alrededor necesito tu ubicación. Activa la ubicación del móvil y permite que el navegador la use, y vuelve a pulsar el botón.');
+      else if (err.code === 3) locMsg('Tu ubicación está tardando demasiado. Comprueba que tienes la ubicación del móvil activada y vuelve a intentarlo.');
+      else locMsg('No he podido saber dónde estás. Activa la ubicación del móvil (GPS) y vuelve a intentarlo.');
+    }, { enableHighAccuracy: false, timeout: 12000, maximumAge: 300000 });
   });
 
-  $('#place').addEventListener('change', e => { place = e.target.value; me = null; store.set('prov', place); renderFuel(); });
+  $('#moreBtn').addEventListener('click', () => { shown += PAGE; renderFuel(); });
+
+  $('#place').addEventListener('change', e => { place = e.target.value; me = null; shown = PAGE; $('#radius').hidden = true; $('#locBtn').textContent = '📍 Ver las de cerca de mí'; locMsg(''); store.set('prov', place); renderFuel(); });
   document.querySelectorAll('[data-fuel]').forEach(b => b.addEventListener('click', () => {
-    fuel = b.dataset.fuel; store.set('fuel', fuel);
+    fuel = b.dataset.fuel; store.set('fuel', fuel); shown = PAGE;
     document.querySelectorAll('[data-fuel]').forEach(x => x.setAttribute('aria-pressed', x === b)); renderFuel();
   }));
   document.querySelectorAll('[data-day]').forEach(b => b.addEventListener('click', () => {
