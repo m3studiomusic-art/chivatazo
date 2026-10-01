@@ -63,7 +63,7 @@
 
   function renderVerdict() {
     const P = data.fuels[fuel].provinces[place];
-    const s = series(), v = verdict(s);
+    const s = series(), v = data.verdicts?.[fuel]?.[place] || verdict(s);
     $('#verdict').textContent = v.t; $('#why').textContent = v.why;
     document.querySelectorAll('.light span').forEach(e => e.classList.toggle('on', e.classList.contains(v.k)));
     $('#avg').textContent = P ? fmt(P.avg) + ' €/l' : '';
@@ -76,6 +76,10 @@
       $('#spark').innerHTML = `<path d="${line} L300 70 L0 70Z" fill="${col}" opacity=".12"/><path d="${line}" fill="none" stroke="${col}" stroke-width="2.5" vector-effect="non-scaling-stroke" stroke-linejoin="round"/><circle cx="${lp[0]}" cy="${lp[1]}" r="4" fill="${col}"/>`;
       $('#trendLabel').textContent = `Precio medio en tu provincia, últimos ${s.length} días`;
     } else { $('#spark').innerHTML = ''; $('#trendLabel').textContent = 'Precio medio en tu provincia'; }
+    const sig = data.market?.signal;
+    $('#brentNote').textContent = sig
+      ? `Brent: ${fmt(sig.now, 2)} € por barril (${sig.pct >= 0 ? 'sube' : 'baja'} un ${fmt(Math.abs(sig.pct * 100), 1)} % en una semana)`
+      : '';
     return v;
   }
 
