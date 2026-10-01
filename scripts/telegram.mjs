@@ -64,7 +64,8 @@ function fuelBlock(prov) {
     const F = data.fuels[fuel];
     const avg = prov ? F.provinces[prov]?.avg : F.avg;
     if (!avg) continue;
-    const t = trend(fuel, key);
+    const v = data.verdicts?.[fuel]?.[key];
+    const t = v ? { icon: { g: '🟢', r: '🔴', a: '🟡' }[v.k], txt: v.t.toLowerCase() } : trend(fuel, key);
     lines.push(`${t.icon} ${name}: ${fmt(avg)} €/l de media, ${t.txt}`);
   }
   let extra = '';
@@ -72,7 +73,8 @@ function fuelBlock(prov) {
     const ps = Object.entries(data.fuels.g95.provinces).filter(([, v]) => v.n >= 20).sort((a, b) => a[1].avg - b[1].avg);
     if (ps.length > 2) extra = `\n📉 Provincia más barata (95): ${esc(nice(ps[0][0]))}, ${fmt(ps[0][1].avg)} €/l\n📈 Más cara: ${esc(nice(ps.at(-1)[0]))}, ${fmt(ps.at(-1)[1].avg)} €/l`;
   }
-  return `⛽ <b>Carburantes ${prov ? 'en ' + esc(nice(prov)) : 'en España'}</b>\n` + lines.join('\n') + extra + '\n';
+  const why = data.verdicts?.g95?.[key]?.why;
+  return `⛽ <b>Carburantes ${prov ? 'en ' + esc(nice(prov)) : 'en España'}</b>\n` + lines.join('\n') + (why ? `\n<i>${esc(why)}</i>` : '') + extra + '\n';
 }
 
 async function buildMessage(prov) {
